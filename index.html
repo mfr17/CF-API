@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloudflare Config Viewer</title>
+    <!-- Tailwind CSS CDN for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 font-sans">
+    <div class="max-w-4xl mx-auto p-6">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">Cloudflare Configuration</h1>
+        <div class="text-center mb-6">
+            <button id="fetchConfig"
+                class="bg-blue-500 text-white px-6 py-3 rounded-lg shadow-lg hover:bg-blue-600 transition"> Fetch
+                Configuration </button>
+        </div>
+        <!-- Table to display configuration -->
+        <table id="configTable" class="w-full bg-white shadow-lg rounded-lg hidden">
+            <thead>
+                <tr class="border-b bg-gray-100">
+                    <th class="py-2 px-4 text-left text-sm font-semibold text-gray-600">#</th>
+                    <!-- Table column for numbering -->
+                    <th class="py-2 px-4 text-left text-sm font-semibold text-gray-600">Service</th>
+                    <th class="py-2 px-4 text-left text-sm font-semibold text-gray-600">Hostname</th>
+                    <th class="py-2 px-4 text-left text-sm font-semibold text-gray-600">Origin Request</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Rows will be dynamically added here -->
+            </tbody>
+        </table>
+        <!-- Form to add new configuration -->
+        <h2 class="text-xl font-semibold text-gray-700 mt-8">Add New Configuration</h2>
+        <form id="configForm" class="bg-white shadow-lg rounded-lg p-6 mt-4 hidden">
+            <!-- Input for Service -->
+            <label for="service" class="block text-sm font-semibold text-gray-700">Service:</label>
+            <input type="text" id="service" name="service" required
+                class="w-full p-3 mt-2 mb-4 border border-gray-300 rounded-lg" placeholder="Enter service URL">
+            <!-- Input for Hostname -->
+            <label for="hostname" class="block text-sm font-semibold text-gray-700">Hostname:</label>
+            <input type="text" id="hostname" name="hostname" required
+                class="w-full p-3 mt-2 mb-4 border border-gray-300 rounded-lg" placeholder="Enter hostname">
+            <!-- Input for Origin Request -->
+            <label for="originRequest" class="block text-sm font-semibold text-gray-700">Origin Request:</label>
+            <textarea id="originRequest" name="originRequest"
+                class="w-full p-3 mt-2 mb-4 border border-gray-300 rounded-lg"
+                placeholder="Enter origin request JSON (Optional)"></textarea>
+            <!-- Submit button for the form -->
+            <button type="submit"
+                class="bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg hover:bg-green-600 transition">Add
+                Configuration</button>
+        </form>
+    </div>
+    <script>
+        let configData = null; // Variable to hold the fetched config data
+
+        // Event listener for fetching configuration
+        document.getElementById('fetchConfig').addEventListener('click', async () => {
+            const table = document.getElementById('configTable');
+            const tbody = table.querySelector('tbody');
+
+            // Clear existing table rows before adding new ones
+            tbody.innerHTML = '';
+
+            try {
+                const response = await fetch('http://127.0.0.1:5000/get/config'); // Fetch configuration from the server
+                const data = await response.json(); // Parse the JSON response
+                if (data.error) { // Handle server error
+                    alert(`Error: ${data.error}`);
+                    return;
+                }
+                // Modify the fetched data to match the required structure
+                const modifiedData = {
+                    success: data.success,
+                    errors: data.errors || [],
+                    messages: data.messages || [],
+                    result: {
+                        tunnel_id: data.result?.tunnel_id || null,
+                        version: data.result?.version || null,
+                        config: {
+                            ingress: data.result?.config?.ingress?.map(entry => ({
+                                service: entry.service || "",
+                                hostname: entry.hostname || "",
+                                originRequest: entry.originRequest || {}
+                            })) || [],
+                            "warp-routing": data.result?.config?.["warp-routing"] || {}
+                        },
+                        source: data.result?.source || null,
+                        created_at: data.result?.created_at || null
+                    }
+                };
+                table.style.display = 'table'; // Show the table
+                configData = modifiedData.result.config;
+
+                // Add numbered rows to the table dynamically
+                configData.ingress.forEach((entry, index) => {
+                    const row = document.createElement('tr');
+                    row.classList.add('border-b'); // Styling for the row
+                    row.innerHTML = `
+                        <td class="py-3 px-4 text-sm text-gray-600">${index + 1}</td> <!-- Add numbering -->
+                        <td class="py-3 px-4 text-sm text-gray-600">${entry.hostname || '-'}</td>
+                        <td class="py-3 px-4 text-sm text-gray-600">${entry.service || '-'}</td>
+                        <td class="py-3 px-4 text-sm text-gray-600">${JSON.stringify(entry.originRequest || {})}</td>
+                    `;
+                    tbody.appendChild(row); // Append the row to the table body
+                });
+
+                document.getElementById('configForm').style.display = 'block'; // Show the form for adding new data
+
+            } catch (error) { // Handle network or parsing errors
+                alert(`Failed to fetch configuration: ${error.message}`);
+            }
+        });
+
+        // Event listener for submitting new configuration
+        document.getElementById('configForm').addEventListener('submit', async (e) => {
+            e.preventDefault(); // Prevent default form submission
+
+            // Extract form values
+            const hostname = document.getElementById('hostname').value;
+            const service = document.getElementById('service').value;
+            const originRequest = document.getElementById('originRequest').value ? JSON.parse(document.getElementById('originRequest').value) : {};
+
+            const newData = { // Create a new data entry
+                service: service,
+                hostname: hostname,
+                originRequest: originRequest
+            };
+
+            // Insert new data above the "http_status:404" entry or at the end
+            const index = configData.ingress.findIndex(entry => entry.service === "http_status:404");
+            if (index !== -1) {
+                configData.ingress.splice(index, 0, newData);
+            } else {
+                configData.ingress.push(newData);
+            }
+
+            // Wrap configData to prepare for sending to the server
+            const wrapData = {
+                config: configData
+            };
+
+            try {
+                const updateResponse = await fetch('http://127.0.0.1:5000/update/config', { // Send updated data to server
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(wrapData)
+                });
+
+                const updateData = await updateResponse.json();
+                if (updateData.success) { // Success feedback
+                    alert("Configuration updated successfully!");
+                    document.getElementById('fetchConfig').click(); // Refresh the table
+                } else { // Error feedback
+                    alert("Failed to update configuration.");
+                }
+            } catch (error) { // Handle network errors
+                alert(`Failed to update configuration: ${error.message}`);
+            }
+        });
+    </script>
+</body>
+</html>
