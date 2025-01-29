@@ -2,67 +2,98 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests
 
-# Input your accountId and tunnelId
-account_id = ""  # Your Cloudflare Account ID
+# Input your accountId and tunnelId 
+account_id = ""  # Your Account ID 
 tunnel_id = ""  # Your Tunnel ID
 
-# Input your credentials
-email = ""  # Your Cloudflare email
-token = ""  # Your Cloudflare API Token
+# Input your Credentials
+email = ""  # Your Email registered on Cloudlared
+token = ""  # Your API Token
 
-# Initialize the Flask application
+# Initialize Flask application and enable CORS
 app = Flask(__name__)
-
-# Enable Cross-Origin Resource Sharing (CORS) for this app
 CORS(app)
 
-# Route to fetch the current configuration from Cloudflare
+# Define base URLs for API requests
+BASE_URL = "https://api.cloudflare.com/client/v4/accounts/{}/cfd_tunnel/{}"
+ZONE_URL = "https://api.cloudflare.com/client/v4/zones"
+
+def get_headers():
+    # Return headers required for API requests
+    return {
+        "X-Auth-Email": email, 
+        "X-Auth-Key": token, 
+        "Content-Type": "application/json"
+    }
+
 @app.route('/get/config', methods=['GET'])
 def get_config():
-    # URL to get configuration for a specific tunnel
-    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations"
+    # Fetch the configuration for the specified tunnel
+    url = BASE_URL.format(account_id, tunnel_id) + "/configurations"
+    headers = get_headers()
 
-    # Set up headers with authentication and content type
-    headers = {
-        "X-Auth-Email": email,  # Auth email header
-        "X-Auth-Key": token,    # API token for authentication
-        "Content-Type": "application/json"
-    }
-
-    # Make a GET request to Cloudflare API
     response = requests.get(url, headers=headers)
 
-    # Check if the request was successful
     if response.status_code == 200:
-        data = response.json()  # Parse JSON response
-        return jsonify(data)    # Return the data as JSON
+        return jsonify(response.json())
     else:
-        # Return an error response if the request failed
         return jsonify({"error": "Failed to fetch data", "status_code": response.status_code})
 
-# Route to update the configuration in Cloudflare
 @app.route('/update/config', methods=['POST'])
 def update_config():
-    # Get the updated configuration from the request body
-    updated_config = request.get_json()
+    # Update the configuration and DNS record for the specified tunnel
+    data = request.get_json()
+    updated_config = data.get('config')
+    hostname = data.get('hostname')
+    
+    tunnel_url = BASE_URL.format(account_id, tunnel_id) + "/configurations"
+    headers = get_headers()
 
-    # URL to update configuration for a specific tunnel
-    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations"
+    # Retrieve zones to find the correct domain
+    get_zones = requests.get(ZONE_URL, headers=headers)
+    if get_zones.status_code != 200:
+        return jsonify({"error": "Failed to retrieve zones", "status_code": get_zones.status_code})
 
-    # Set up headers with authentication and content type
-    headers = {
-        "X-Auth-Email": email,  # Auth email header
-        "X-Auth-Key": token,    # API token for authentication
-        "Content-Type": "application/json"
+    data = get_zones.json()
+    parts = [part for part in hostname.split('.') if part]
+
+    # Determine domain and subdomain from hostname
+    if len(parts) > 2:
+        domain = '.'.join(parts[1:])
+        subdomain = parts[0]
+    else:
+        domain = hostname
+        subdomain = ""
+
+    # Filter zones to find the matching domain
+    domain_zones = [
+        {"id": zone['id'], "name": zone['name']} 
+        for zone in data.get('result', []) 
+        if zone['name'] == domain
+    ]
+
+    # Prepare DNS data for the new record
+    dns_data = {
+        "type": "CNAME",
+        "name": subdomain if subdomain else hostname,
+        "content": f"{tunnel_id}.cfargotunnel.com",
+        "ttl": 1,
+        "proxied": True
     }
 
-    # Make a PUT request to Cloudflare API with the updated configuration
-    requests.put(url, headers=headers, json=updated_config)
+    # Update the tunnel configuration
+    tunnel = requests.put(tunnel_url, headers=headers, json=updated_config)
+    if tunnel.status_code != 200:
+        return jsonify({"error": "Failed to update tunnel", "status_code": tunnel.status_code})
 
-    # Return a success response
-    return jsonify({"success": True, "message": "Configuration updated successfully."}), 200
+    # Add the DNS record for the specified domain
+    dns_url = f"https://api.cloudflare.com/client/v4/zones/{domain_zones[0]['id']}/dns_records"
+    dns = requests.post(dns_url, headers=headers, json=dns_data)
+    if dns.status_code != 200:
+        return jsonify({"error": "Failed to add DNS record", "status_code": dns.status_code})
 
-# Entry point for the Flask application
+    return jsonify({"success": True, "message": "Configuration updated and DNS record added successfully."}), 200
+
 if __name__ == '__main__':
-    # Run the Flask app in debug mode
-    app.run(debug=True)
+    # Run the Flask application in debug mode
+    app.run(debug=False)
