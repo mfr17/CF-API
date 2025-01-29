@@ -3,13 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cloudflare Config Viewer</title>
-    <!-- Tailwind CSS CDN for styling -->
+    <link rel="icon" href="https://www.cloudflare.com/favicon.ico">
+    <title>Cloudflare Tunnel Config</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
 <body class="bg-gray-50 font-sans">
     <div class="max-w-4xl mx-auto p-6">
-        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">Cloudflare Configuration</h1>
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">Cloudflare Tunnel Config</h1>
         <div class="text-center mb-6">
             <button id="fetchConfig"
                 class="bg-blue-500 text-white px-6 py-3 rounded-lg shadow-lg hover:bg-blue-600 transition"> Fetch
@@ -20,9 +22,8 @@
             <thead>
                 <tr class="border-b bg-gray-100">
                     <th class="py-2 px-4 text-left text-sm font-semibold text-gray-600">#</th>
-                    <!-- Table column for numbering -->
-                    <th class="py-2 px-4 text-left text-sm font-semibold text-gray-600">Service</th>
                     <th class="py-2 px-4 text-left text-sm font-semibold text-gray-600">Hostname</th>
+                    <th class="py-2 px-4 text-left text-sm font-semibold text-gray-600">Service</th>
                     <th class="py-2 px-4 text-left text-sm font-semibold text-gray-600">Origin Request</th>
                 </tr>
             </thead>
@@ -31,25 +32,37 @@
             </tbody>
         </table>
         <!-- Form to add new configuration -->
-        <h2 class="text-xl font-semibold text-gray-700 mt-8">Add New Configuration</h2>
+        <div id="loading" class="hidden flex items-center justify-center h-full">
+            <svg class="animate-spin h-10 w-10 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none"
+                viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+            </svg>
+        </div>
+        <h2 id="addConfigHeader" class="text-xl font-semibold text-gray-700 mt-8 mb-4 hidden">Add New Configuration</h2>
         <form id="configForm" class="bg-white shadow-lg rounded-lg p-6 mt-4 hidden">
-            <!-- Input for Service -->
-            <label for="service" class="block text-sm font-semibold text-gray-700">Service:</label>
-            <input type="text" id="service" name="service" required
-                class="w-full p-3 mt-2 mb-4 border border-gray-300 rounded-lg" placeholder="Enter service URL">
             <!-- Input for Hostname -->
             <label for="hostname" class="block text-sm font-semibold text-gray-700">Hostname:</label>
             <input type="text" id="hostname" name="hostname" required
-                class="w-full p-3 mt-2 mb-4 border border-gray-300 rounded-lg" placeholder="Enter hostname">
+                class="w-full p-3 mt-2 mb-4 border border-gray-300 rounded-lg"
+                placeholder="Enter hostname (e.g., example.com)">
+            <!-- Input for Service -->
+            <label for="service" class="block text-sm font-semibold text-gray-700">Service:</label>
+            <input type="text" id="service" name="service" required
+                class="w-full p-3 mt-2 mb-4 border border-gray-300 rounded-lg"
+                placeholder="Enter service URL (e.g., http://service.com or http://ip:port)">
             <!-- Input for Origin Request -->
             <label for="originRequest" class="block text-sm font-semibold text-gray-700">Origin Request:</label>
             <textarea id="originRequest" name="originRequest"
                 class="w-full p-3 mt-2 mb-4 border border-gray-300 rounded-lg"
-                placeholder="Enter origin request JSON (Optional)"></textarea>
+                placeholder='Enter origin request JSON (Optional, e.g., {"access": {"audTag": "example-aud-tag", "teamName": "example-team-name"}, "caPool": "/path/to/ca.pem", "connectTimeout": 30, "http2Origin": true})'></textarea>
             <!-- Submit button for the form -->
             <button type="submit"
                 class="bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg hover:bg-green-600 transition">Add
                 Configuration</button>
+            <button type="reset"
+                class="bg-gray-500 text-white px-6 py-3 rounded-lg shadow-lg hover:bg-gray-600 transition">Reset</button>
+            <!-- Reset button -->
         </form>
     </div>
     <script>
@@ -59,15 +72,23 @@
         document.getElementById('fetchConfig').addEventListener('click', async () => {
             const table = document.getElementById('configTable');
             const tbody = table.querySelector('tbody');
+            const loading = document.getElementById('loading');
+            const fetchButton = document.getElementById('fetchConfig'); // Ambil tombol fetch
+
+            // Nonaktifkan tombol fetch untuk mencegah klik ganda
+            fetchButton.disabled = true;
+
+            // Show loading indicator
+            loading.classList.remove('hidden');
 
             // Clear existing table rows before adding new ones
             tbody.innerHTML = '';
 
             try {
-                const response = await fetch('http://127.0.0.1:5000/get/config'); // Fetch configuration from the server
+                const response = await fetch('http://127.0.0.1:5000/get/config'); // Use HTTPS
                 const data = await response.json(); // Parse the JSON response
                 if (data.error) { // Handle server error
-                    alert(`Error: ${data.error}`);
+                    Swal.fire('Error', `Error: ${data.error}`, 'error');
                     return;
                 }
                 // Modify the fetched data to match the required structure
@@ -106,10 +127,17 @@
                     tbody.appendChild(row); // Append the row to the table body
                 });
 
+                // Show the form for adding new data
+                document.getElementById('addConfigHeader').classList.remove('hidden'); // Remove hidden class
                 document.getElementById('configForm').style.display = 'block'; // Show the form for adding new data
-
+                Swal.fire('Success', 'Configuration fetched successfully!', 'success'); // Success notification
             } catch (error) { // Handle network or parsing errors
-                alert(`Failed to fetch configuration: ${error.message}`);
+                Swal.fire('Error', `Failed to fetch configuration: ${error.message}`, 'error');
+            } finally {
+                // Hide loading indicator
+                loading.classList.add('hidden');
+                // Aktifkan kembali tombol fetch
+                fetchButton.disabled = false;
             }
         });
 
@@ -117,10 +145,23 @@
         document.getElementById('configForm').addEventListener('submit', async (e) => {
             e.preventDefault(); // Prevent default form submission
 
+            // Show loading indicator
+            loading.classList.remove('hidden'); // Show the spinner
+
             // Extract form values
             const hostname = document.getElementById('hostname').value;
             const service = document.getElementById('service').value;
-            const originRequest = document.getElementById('originRequest').value ? JSON.parse(document.getElementById('originRequest').value) : {};
+            const originRequestValue = document.getElementById('originRequest').value;
+
+            // Validate JSON format for originRequest
+            let originRequest = {};
+            try {
+                originRequest = originRequestValue ? JSON.parse(originRequestValue) : {};
+            } catch (error) {
+                Swal.fire('Error', "Invalid JSON format for Origin Request.", 'error');
+                loading.classList.add('hidden'); // Hide the spinner
+                return;
+            }
 
             const newData = { // Create a new data entry
                 service: service,
@@ -138,7 +179,8 @@
 
             // Wrap configData to prepare for sending to the server
             const wrapData = {
-                config: configData
+                config: { config: configData },
+                hostname: hostname,
             };
 
             try {
@@ -152,13 +194,19 @@
 
                 const updateData = await updateResponse.json();
                 if (updateData.success) { // Success feedback
-                    alert("Configuration updated successfully!");
+                    Swal.fire('Success', "Configuration updated successfully!", 'success');
                     document.getElementById('fetchConfig').click(); // Refresh the table
+
+                    // Reset the form fields
+                    document.getElementById('configForm').reset(); // Reset the form
+                    document.getElementById('addConfigHeader').classList.add('hidden'); // Optionally hide the header again
                 } else { // Error feedback
-                    alert("Failed to update configuration.");
+                    Swal.fire('Error', `Failed to update configuration. ${updateData.message}`, 'error');
                 }
             } catch (error) { // Handle network errors
-                alert(`Failed to update configuration: ${error.message}`);
+                Swal.fire('Error', `Failed to update configuration: ${error.message}`, 'error');
+            } finally {
+                loading.classList.add('hidden'); // Hide the spinner after the process
             }
         });
     </script>
